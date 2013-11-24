@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sqlite3.h>
-#include <arpa/inet.h>
 
 #define IP_ADDR_LENGTH 16
 #define QUERY_STRING_LENGTH 64
@@ -26,31 +25,38 @@ print_http_header( void )
 }
 
 // get environment variables safely
-static const char *
-get_env_vars ( const char *name, size_t size )
+void
+get_env_vars ( char *buf, const char *name, size_t size )
 {
+  debug("size: %d", size);
   char *value = getenv ( name );
   if ( value == NULL )
-    {
-      log_err( "Can't get %s", name );
-      return "";
-    } 
+    log_err( "Can't get %s", name );
   else
     {
-      value[size-1] = '\0';
       debug( "%s:\t\t%s", name, value );
-      return value;
+      strncpy(buf, value, size);
+      buf[size-1] = '\0';
     }
 }
 
 // check if ip address is valid
-// http://stackoverflow.com/posts/792016/revisions
 static int
-is_ip_address(const char *ip_addr)
+is_ip_address(char *ip_addr)
 {
-    struct sockaddr_in sa;
-    int result = inet_pton(AF_INET, ip_addr, &(sa.sin_addr));
-    return result != 0;
+  char *octet = strtok ( ip_addr, "." );
+  int i = 0;
+
+  while ( octet != NULL )
+    {
+      if( atoi(octet) < 0x0
+          || atoi(octet) > 0xff
+          || i > 3 )
+        return 0;
+      octet = strtok(NULL, ".");
+      i++;
+    }
+  return 1;
 }
 
 // callback function for sql hostname query
@@ -106,12 +112,17 @@ get_client_hostname ( char *client_hostname, const char *db_file_name,
 
 int
 main ( void ) {
-  char hostname[HOSTNAME_LENGTH];
-  const char *db_file_name = DB_FILE_NAME;
-  const char *ip_addr = get_env_vars("REMOTE_ADDR", IP_ADDR_LENGTH);
-  const char *query_string = get_env_vars("QUERY_STRING", QUERY_STRING_LENGTH);
+  const char db_file_name[] = DB_FILE_NAME;
+  char hostname[HOSTNAME_LENGTH] = "";
+  char ip_addr[IP_ADDR_LENGTH] = ""; 
+  char query_string[QUERY_STRING_LENGTH] = "";
+  char buf[IP_ADDR_LENGTH] = "";
 
-  if ( ! is_ip_address ( ip_addr ) )
+  get_env_vars(ip_addr, "REMOTE_ADDR", IP_ADDR_LENGTH);
+  get_env_vars(query_string, "QUERY_STRING", QUERY_STRING_LENGTH);
+  strncat(buf, ip_addr, sizeof(buf));
+
+  if ( ! is_ip_address ( buf ) )
     {
       log_err( "Not a valid IP address: %s", ip_addr );
       return -1;
@@ -126,9 +137,11 @@ main ( void ) {
   print_http_header();
 
   if ( hostname[0] == '\0' )
-    printf( "Go away!" );  
+    printf( "Go away!\n" );  
   else
-    debug( "Hostname:\t%s", hostname );
+    printf( "Hostname:\t%s\n", hostname );
+    printf( "IP:\t%s\n", ip_addr );
+    printf( "ID:\t%s\n", query_string );
 
   // bye
   return 0;

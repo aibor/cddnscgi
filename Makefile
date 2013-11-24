@@ -9,7 +9,7 @@ ndebug: ddns
 
 .PHONY: test
 test:
-	REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop ./ddns.cgi
+	bash -c 'time REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop ./ddns.cgi'
 
 .PHONY: clean
 clean:
