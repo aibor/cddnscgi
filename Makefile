@@ -11,6 +11,9 @@ ndebug: ddns
 test:
 	bash -c 'time REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop ./ddns.cgi'
 
+valgrind:
+	REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop valgrind ./ddns.cgi
+
 .PHONY: clean
 clean:
 	rm ddns.cgi
