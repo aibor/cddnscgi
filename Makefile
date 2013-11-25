@@ -10,6 +10,7 @@ OBJ = $(shell ls *.c | sed 's/.c/.o/')
 DB_FILE = ./.clients.db
 DB_FILE_TEST = ./test.db
 
+TEST_ENV = REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop 
 
 ddns: $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) -o $@.cgi $(OBJ)
@@ -35,10 +36,10 @@ testdb: db
 
 .PHONY: test valgrind clean proper
 test:
-	bash -c 'time REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop ./ddns.cgi'
+	bash -c 'time $(TEST_ENV) ./ddns.cgi'
 
 valgrind:
-	REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop valgrind ./ddns.cgi
+	$(TEST_ENV) valgrind ./ddns.cgi
 
 clean:
 	-rm -f ddns.{cgi,o}
