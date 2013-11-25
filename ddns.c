@@ -10,10 +10,9 @@
 #define CHARSET "utf-8"
 #define DB_FILE_NAME "test.db"
 
-struct record_t
+struct host
 {
-  char hostname[HOSTNAME_LENGTH];
-  int ttl;
+  char name[HOSTNAME_LENGTH];
   char ip_addr[IP_ADDR_LENGTH]; 
 };
 
@@ -61,18 +60,23 @@ is_ip_address(char *ip_addr)
 
 // callback function for sql hostname query
 static int
-cb_hostname( void *client_hostname, int argc, char **argv, char**azColName )
+cb_hostname( void *host_v, int argc, char **argv, char**azColName )
 {
-  debug( "Arg[0]: %s", argv[0] );
-  strncpy( (char*)client_hostname, argv[0], HOSTNAME_LENGTH - 1 );
-  debug( "client_hostname: %s", (char*)client_hostname );
+  struct host *host = (struct host *)host_v;
+  debug( "argc: %d", argc );
+  debug( "argv[0]: %s", argv[0] );
+  strncpy( host->name, argv[0] ? argv[0] : "", HOSTNAME_LENGTH - 1 );
+  debug( "argv[1]: %s", argv[1] );
+  strncpy( host->ip_addr, argv[1] ? argv[1] : "", IP_ADDR_LENGTH - 1 );
+  debug( "client->hostname: %s", host->name );
+  debug( "client->ip_addr: %s", host->ip_addr );
 
   return 0;
 }
 
 // get hostname for an id_string from sqlite3 database
 static int
-get_client_hostname ( char *client_hostname, const char *db_file_name,
+get_client_hostname ( struct host *host, const char *db_file_name,
                       const char *id_string )
 {
   sqlite3 *db_conn;
@@ -94,10 +98,10 @@ get_client_hostname ( char *client_hostname, const char *db_file_name,
     }
 
   snprintf( sql, sizeof(sql),
-      "SELECT hostname FROM clients WHERE id_string='%s' LIMIT 1;", id_string );
+      "SELECT hostname,ip FROM clients WHERE id_string='%s' LIMIT 1;", id_string );
   debug( "SQL statement:\t%s", sql );
 
-  if( sqlite3_exec( db_conn, sql, cb_hostname, (void*)client_hostname,
+  if( sqlite3_exec( db_conn, sql, cb_hostname, (void*)host,
         &zErrMsg ) != SQLITE_OK )
     {
       log_err( "SQL error:\t%s", zErrMsg);
@@ -113,7 +117,7 @@ get_client_hostname ( char *client_hostname, const char *db_file_name,
 int
 main ( void ) {
   const char db_file_name[] = DB_FILE_NAME;
-  char hostname[HOSTNAME_LENGTH] = "";
+  struct host client = {"",""};
   char ip_addr[IP_ADDR_LENGTH] = ""; 
   char query_string[QUERY_STRING_LENGTH] = "";
   char buf[IP_ADDR_LENGTH] = "";
@@ -128,7 +132,7 @@ main ( void ) {
       return -1;
     }
 
-  if( ! get_client_hostname( hostname, db_file_name, query_string ) )
+  if( ! get_client_hostname( &client, db_file_name, query_string ) )
     {
       log_err( "shit!" );
       return -1;
@@ -136,11 +140,13 @@ main ( void ) {
   
   print_http_header();
 
-  if ( hostname[0] == '\0' )
+  if ( client.name[0] == '\0' )
     printf( "Go away!\n" );  
   else
-    printf( "Hostname:\t%s\n", hostname );
-    printf( "IP:\t%s\n", ip_addr );
+    if ( strcmp(ip_addr, client.ip_addr) != 0 )
+      strcpy(client.ip_addr, ip_addr);
+    printf( "Hostname:\t%s\n", client.name );
+    printf( "IP:\t%s\n", client.ip_addr );
     printf( "ID:\t%s\n", query_string );
 
   // bye
