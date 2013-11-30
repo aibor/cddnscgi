@@ -1,5 +1,6 @@
-CC = /usr/bin/gcc
-SQLITE = /usr/bin/sqlite3
+CC := /usr/bin/gcc
+SQLITE := /usr/bin/sqlite3
+SHELL := /usr/bin/bash
 
 CFLAGS = -Wall -g -Wextra
 LDFLAGS = -lsqlite3
@@ -11,6 +12,10 @@ DB_FILE = ./.clients.db
 DB_FILE_TEST = ./test.db
 
 TEST_ENV = REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop 
+
+all: proper ddns db
+
+dev: proper testdb debug test
 
 ddns: $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) -o $@.cgi $(OBJ)
@@ -36,13 +41,16 @@ testdb: db
 
 .PHONY: test valgrind clean proper
 test:
-	bash -c 'time $(TEST_ENV) ./ddns.cgi'
+	@start=$$(date '+%s.%N'); \
+	time $(TEST_ENV) ./ddns.cgi; \
+	stop=$$(date '+%s.%N'); \
+	echo -e "\033[0;34mLaufzeit:\033[0m "$$(bc <<< "$$stop - $$start")" seconds"
 
 valgrind:
 	$(TEST_ENV) valgrind ./ddns.cgi
 
 clean:
-	-rm -f ddns.{cgi,o}
+	-rm -f ddns.cgi *.o
 
 proper: clean
 	-rm -f $(DB_FILE) $(DB_FILE_TEST)
