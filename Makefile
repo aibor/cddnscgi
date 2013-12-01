@@ -2,16 +2,17 @@ CC := /usr/bin/gcc
 SQLITE := /usr/bin/sqlite3
 SHELL := /usr/bin/bash
 
-CFLAGS = -Wall -g -Wextra
+CFLAGS = -Wall -g -Wextra -O2
 LDFLAGS = -lsqlite3
 NDEBUG = -DNDEBUG
 
-OBJ = $(shell ls *.c | sed 's/.c/.o/')
+#OBJ = $(shell ls *.c | sed 's/.c/.o/')
+OBJ = ddns.o
 
 DB_FILE = ./.clients.db
 DB_FILE_TEST = ./test.db
 
-TEST_ENV = REMOTE_ADDR=192.168.234.12 QUERY_STRING=qwertzuiop 
+TEST_ENV = REMOTE_ADDR=192.168.234.234 QUERY_STRING=qwertzuiop 
 
 all: proper ddns db
 
