@@ -2,43 +2,52 @@ CC := /usr/bin/gcc
 SQLITE := /usr/bin/sqlite3
 SHELL := /usr/bin/bash
 
-CFLAGS = -Wall -g -Wextra -O2
+CFLAGS = -g -O3 -std=gnu99 -Wall -Wextra
 LDFLAGS = -lsqlite3
 NDEBUG = -DNDEBUG
 
-#OBJ = $(shell ls *.c | sed 's/.c/.o/')
 OBJ = ddns.o
 
-DB_FILE = ./.clients.db
-DB_FILE_TEST = ./test.db
+DB_FILE = dns.db
+DB_FILE_TEST = test.db
 
-TEST_ENV = REMOTE_ADDR=192.168.234.234 QUERY_STRING=qwertzuiop 
+DB_SCHEMA = ./dns.db.schema
+
+REMOTE_ADDR := 192.168.234.234 
+TEST_ENV = REMOTE_ADDR=$(REMOTE_ADDR) QUERY_STRING=qwertzuiop 
 
 all: proper ddns db
 
 dev: proper testdb debug test
 
 ddns: $(OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) -o $@.cgi $(OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) $(FLAGS) -o $@.cgi $(OBJ)
 
 debug: NDEBUG =
+debug: FLAGS = -DDB_FILE_NAME='"$(DB_FILE_TEST)"'
 debug: ddns
 
 db:
-	$(SQLITE) $(DB_FILE) "create table clients ( \
-		id integer primary key autoincrement, \
-		hostname varchar(64), \
-		id_string varchar(64), \
-		ip varchar(15) );"
+	$(SQLITE) $(DB_FILE) -init $(DB_SCHEMA) ""
 
 testdb: DB_FILE = $(DB_FILE_TEST)
 testdb: db
 	$(SQLITE) $(DB_FILE) \
-		"insert into clients ( hostname, id_string, ip )	\
-		values ( 'home.example.com', 'qwertzuiop', '10.0.0.1' );"
+		"INSERT INTO domains(domain_name) \
+			VALUES ('example.com.'); \
+		 INSERT INTO records_j(name, domain, type, content) \
+		 	VALUES ('test', 'example.com.', 'A', '10.0.0.1'); \
+		 INSERT INTO ddns_clients(id_string, record_id) \
+			VALUES ('qwertzuiop', ( \
+				SELECT id \
+				FROM records_j \
+				WHERE name = 'test' \
+				AND domain = 'example.com.' \
+				AND type = 'A' \
+			));"
 
 %.o: %.c
-	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) -c $<
+	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) $(FLAGS) -c $<
 
 .PHONY: test valgrind clean proper
 test:

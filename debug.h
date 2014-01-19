@@ -4,14 +4,12 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
-//#include <sys/timeb.h>
+#include <stdlib.h>
 #include <sys/time.h>
 
 #ifdef NDEBUG
 #define debug(M, ...)
 #else
-//#define debug(M, ...) fprintf(stderr, "\033[1;37mDEBUG\033[0m %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-//#define debug(M, ...) { struct timeb tp; ftime(&tp); fprintf(stderr, "\033[1;37mDEBUG\033[0m [\033[0;34m%1d.%d\033[0m] \033[0;33m%s\033[0m:\033[0;33m%d\033[0m: " M "\n", tp.time, tp.millitm, __FILE__, __LINE__, ##__VA_ARGS__); }
 #define debug(M, ...) { struct timeval tv; gettimeofday(&tv, 0); fprintf(stderr, "\033[1;37mDEBUG\033[0m [\033[0;34m%1d.%d\033[0m] \033[0;33m%s\033[0m:\033[0;33m%d\033[0m: " M "\n", (int)tv.tv_sec, (int)tv.tv_usec, __FILE__, __LINE__, ##__VA_ARGS__); }
 #endif
 
@@ -30,5 +28,7 @@
 #define check_mem(A) check((A), "Out of memory.")
 
 #define check_debug(A, M, ...) if(!(A)) { debug(M, ##__VA_ARGS__); errno=0; goto error; }
+
+#define die(A, M, ...) { log_err(M, ##__VA_ARGS__); exit(A); }
 
 #endif
