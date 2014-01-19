@@ -44,7 +44,7 @@ db_open(const char *db_file_name, sqlite3 **db_conn)
 {
   debug("Open DB:\t\t%s", db_file_name);
 
-  if(sqlite3_open(db_file_name, db_conn) != SQLITE_OK) 
+  if (sqlite3_open(db_file_name, db_conn) != SQLITE_OK) 
   {
     log_err("Can't open database: %s", sqlite3_errmsg(*db_conn));
     sqlite3_close(*db_conn);
@@ -84,6 +84,21 @@ db_exec(sqlite3 *db_conn, const char *sql_statement,
 }
 
 /*
+ * set database pragmas for performance increase
+ */
+static int
+db_optimize(sqlite3 *db_conn)
+{
+  char *sql = QUOTE(
+      PRAGMA foreign_keys=ON;
+      PRAGMA locking_mode=EXCLUSIVE;
+      PRAGMA synchronous=OFF;
+      );
+
+  return db_exec(db_conn, sql, 0, 0);
+}
+
+/*
  * print the HTTP header to stdout
  */
 static void
@@ -99,6 +114,7 @@ static int
 get_env_vars(char *buf, const char *name, size_t size)
 {
   char *value = getenv (name);
+  unsigned int i = 0;
 
   if (value == NULL)
     return 1;
@@ -106,8 +122,9 @@ get_env_vars(char *buf, const char *name, size_t size)
   if (strncpy(buf, value, size) == NULL)
     return 2;
 
-  if (size > 0)
-    buf[ size - 1 ] = '\0';
+  for ( ; i < size; i++)
+    if ((buf[i] =='\'') || (i == (size -1)))
+      buf[i] = '\0';
 
   return 0;
 }
@@ -118,7 +135,7 @@ get_env_vars(char *buf, const char *name, size_t size)
 static int
 validate_ip_address(const char *ip_addr)
 {
-  char buf[IP_ADDR_LENGTH] = "",
+  char buf[IP_ADDR_LENGTH],
        *octet;
   int  i = 0;
 
@@ -146,8 +163,10 @@ static int
 cb_hostname(void *client_v, int argc, char **argv, char **azColName)
 {
   struct client *client = (struct client *)client_v;
-  UNUSED(argc);
+  //UNUSED(argc);
   UNUSED(azColName);
+
+  debug("argc: %d", argc);
 
   strncpy(client->record_id, argv[0] ? argv[0] : "", 7);
   strncpy(client->hostname, argv[1] ? argv[1] : "", HOSTNAME_LENGTH - 1);
@@ -195,8 +214,8 @@ main()
 
   const char  db_file_name[] = DB_FILE_NAME;
   struct      client client = {"","",""};
-  char        ip_addr[IP_ADDR_LENGTH] = "", 
-              query_string[QUERY_STRING_LENGTH] = "";
+  char        ip_addr[IP_ADDR_LENGTH], 
+              query_string[QUERY_STRING_LENGTH];
   sqlite3     *db_conn = 0;
 
   if (get_env_vars(ip_addr, "REMOTE_ADDR", IP_ADDR_LENGTH) != 0)
@@ -209,7 +228,10 @@ main()
     die(3, "Not a valid IP address: %s", ip_addr);
 
   if (db_open(db_file_name, &db_conn) != 0)
-    die(4, "No database, no work!")
+    die(4, "No database, no work!");
+
+  if (db_optimize(db_conn) != 0)
+    log_err("Failed to set pragmas for increased performance!");
 
   if (db_get_client(db_conn, &client, query_string) != 0)
   {

@@ -1,7 +1,8 @@
+PRAGMA locking_mode = EXCLUSIVE;
 PRAGMA foreign_keys = ON;
 PRAGMA auto_vacuum = FULL;
 PRAGMA synchronous = OFF;
-PRAGMA locking_mode = EXCLUSIVE;
+PRAGMA journal_mode = WAL;
 
 
 BEGIN TRANSACTION;

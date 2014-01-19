@@ -2,7 +2,7 @@ CC := /usr/bin/gcc
 SQLITE := /usr/bin/sqlite3
 SHELL := /usr/bin/bash
 
-CFLAGS = -g -O3 -std=gnu99 -Wall -Wextra
+CFLAGS = -g -Ofast -std=gnu99 -Wall -Wextra -Wformat -Wno-format-extra-args -Wformat-security -Wformat-nonliteral -Wformat=2
 LDFLAGS = -lsqlite3
 NDEBUG = -DNDEBUG
 
@@ -14,7 +14,8 @@ DB_FILE_TEST = test.db
 DB_SCHEMA = ./db_schema.sql
 
 REMOTE_ADDR := 192.168.234.234 
-TEST_ENV = REMOTE_ADDR=$(REMOTE_ADDR) QUERY_STRING=qwertzuiop 
+QUERY_STRING := qwertzuiop 
+TEST_ENV = REMOTE_ADDR=$(REMOTE_ADDR) QUERY_STRING=$(QUERY_STRING)
 
 all: proper ddns db
 
