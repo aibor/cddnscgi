@@ -11,7 +11,7 @@ OBJ = ddns.o
 DB_FILE = dns.db
 DB_FILE_TEST = test.db
 
-DB_SCHEMA = ./dns.db.schema
+DB_SCHEMA = ./db_schema.sql
 
 REMOTE_ADDR := 192.168.234.234 
 TEST_ENV = REMOTE_ADDR=$(REMOTE_ADDR) QUERY_STRING=qwertzuiop 
