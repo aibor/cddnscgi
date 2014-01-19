@@ -11,7 +11,7 @@ CREATE TABLE domains (
   domain_name VARCHAR(255) NOT NULL COLLATE NOCASE,
   master VARCHAR(128) DEFAULT NULL COLLATE NOCASE,
   email VARCHAR(128) DEFAULT NULL COLLATE NOCASE,
-  serial INTEGER DEFAULT NULL,
+  domain_serial INTEGER DEFAULT NULL,
   refresh INTEGER DEFAULT 86400,
   retry INTEGER DEFAULT 7200,
   expiration INTEGER DEFAULT 2419200,
@@ -93,62 +93,62 @@ BEGIN
   SET email = 'postmaster.' || domain_name
   WHERE domain_id = NEW.domain_id AND NEW.email IS NULL;
   UPDATE domains
-  SET serial = (strftime('%Y%m%d','NOW') * 100) 
+  SET domain_serial = (strftime('%Y%m%d','NOW') * 100) 
   WHERE domain_id = NEW.domain_id;
 END;
 
-CREATE TRIGGER serial_increment_domains AFTER UPDATE ON domains
+CREATE TRIGGER domain_serial_increment_domains AFTER UPDATE ON domains
 WHEN OLD.domain_name <> NEW.domain_name OR OLD.master <> NEW.master
 BEGIN
   UPDATE domains
-  SET serial = (strftime('%Y%m%d','NOW') * 100) 
+  SET domain_serial = (strftime('%Y%m%d','NOW') * 100) 
   WHERE domain_id = NEW.domain_id 
   AND (strftime('%Y%m%d','NOW') * 100) > (
-    SELECT serial
+    SELECT domain_serial
     FROM domains
     WHERE domain_id = NEW.domain_id
   );
   UPDATE domains 
-  SET serial = ((
-    SELECT serial 
+  SET domain_serial = ((
+    SELECT domain_serial 
     FROM domains
     WHERE domain_id = NEW.domain_id
   ) + 1) 
   WHERE domain_id = NEW.domain_id;
 END;
 
-CREATE TRIGGER serial_increment_records AFTER INSERT ON records
+CREATE TRIGGER domain_serial_increment_records AFTER INSERT ON records
 BEGIN
   UPDATE domains
-  SET serial = (strftime('%Y%m%d','NOW') * 100) 
+  SET domain_serial = (strftime('%Y%m%d','NOW') * 100) 
   WHERE domain_id = NEW.domain_id 
   AND (strftime('%Y%m%d','NOW') * 100) > (
-    SELECT serial
+    SELECT domain_serial
     FROM domains
     WHERE domain_id = NEW.domain_id
   );
   UPDATE domains 
-  SET serial = ((
-    SELECT serial 
+  SET domain_serial = ((
+    SELECT domain_serial 
     FROM domains
     WHERE domain_id = NEW.domain_id
   ) + 1) 
   WHERE domain_id = NEW.domain_id;
 END;
 
-CREATE TRIGGER update_serial_and_date AFTER UPDATE ON records
+CREATE TRIGGER update_domain_serial_and_date AFTER UPDATE ON records
 BEGIN
   UPDATE domains
-  SET serial = (strftime('%Y%m%d','NOW') * 100) 
+  SET domain_serial = (strftime('%Y%m%d','NOW') * 100) 
   WHERE domain_id = NEW.domain_id 
   AND (strftime('%Y%m%d','NOW') * 100) > (
-    SELECT serial
+    SELECT domain_serial
     FROM domains
     WHERE domain_id = NEW.domain_id
   );
   UPDATE domains 
-  SET serial = ((
-    SELECT serial 
+  SET domain_serial = ((
+    SELECT domain_serial 
     FROM domains
     WHERE domain_id = NEW.domain_id
   ) + 1) 
