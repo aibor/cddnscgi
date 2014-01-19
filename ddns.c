@@ -22,8 +22,33 @@
 #ifndef CHARSET
 #define CHARSET "utf-8"
 #endif
-#ifndef DB_FILE_NAME
-#define DB_FILE_NAME "dns.db"
+
+#if DB_ENGINE == sqlite3
+#ifndef DB_CONN_PARAMS
+#define DB_CONN_PARAMS "dns.db"
+#endif
+#define DB_OPEN(C,P) { sqlite3_open(P, C); }
+#define DB_OPEN_OK SQLITE_OK
+#define DB_CLOSE(C) { sqlite3_close(C); }
+#define DB_TYPE sqlite3
+#elif DB_ENGINE == psql
+#ifndef DB_CONN_PARAMS
+#define DB_CONN_PARAMS "dbname = dns"
+#endif
+#define DB_OPEN
+#define DB_CLOSE(C) { PQfinish(C); }
+#define DB_TYPE PGconn 
+#endif
+
+#ifndef IP_UPDATE_STMT
+#define IP_UPDATE_STMT "UPDATE records SET content = '%s' WHERE record_id = %s;",\
+                       client->ip_addr, client->record_id
+#endif
+#ifndef CLIENT_QUERY_STMT
+#define CLIENT_QUERY_STMT "SELECT r.record_id, r.record_name, r.content "\
+                          "FROM ddns_clients dd "\
+                          "INNER JOIN records r USING(record_id) "\
+                          "WHERE dd.id_string = '%s';", id_string
 #endif
 
 /*
@@ -40,14 +65,14 @@ struct client
  * wrapper function for opening a sqlite3 database
  */
 static int
-db_open(const char *db_file_name, sqlite3 **db_conn)
+db_open(const char *db_conn_params, DB_TYPE **db_conn)
 {
-  debug("Open DB:\t\t%s", db_file_name);
+  debug("Open DB with params:\t\t%s", db_conn_params);
 
-  if (sqlite3_open(db_file_name, db_conn) != SQLITE_OK) 
+  if ((DB_OPEN(db_conn, db_conn_params)) != DB_OPEN_OK) 
   {
     log_err("Can't open database: %s", sqlite3_errmsg(*db_conn));
-    sqlite3_close(*db_conn);
+    DB_CLOSE(*db_conn);
     return 1;
   } 
   else
@@ -61,7 +86,7 @@ db_open(const char *db_file_name, sqlite3 **db_conn)
  * wrapper function for exectuting any SQL statement
  */
 static int
-db_exec(sqlite3 *db_conn, const char *sql_statement,
+db_exec(DB_TYPE *db_conn, const char *sql_statement,
     sqlite3_callback callback, void *data)
 {
   char *zErrMsg = 0;
@@ -73,7 +98,7 @@ db_exec(sqlite3 *db_conn, const char *sql_statement,
   {
     log_err("SQL error:\t%s", zErrMsg);
     sqlite3_free(zErrMsg);
-    sqlite3_close(db_conn);
+    DB_CLOSE(db_conn);
     return 1;
   }
   else
@@ -87,7 +112,7 @@ db_exec(sqlite3 *db_conn, const char *sql_statement,
  * set database pragmas for performance increase
  */
 static int
-db_optimize(sqlite3 *db_conn)
+db_optimize(DB_TYPE *db_conn)
 {
   char *sql = QUOTE(
       PRAGMA foreign_keys=ON;
@@ -179,16 +204,11 @@ cb_hostname(void *client_v, int argc, char **argv, char **azColName)
  * query client information from sqlite3 database
  */
 static int
-db_get_client(sqlite3 *db_conn, struct client *client, const char *id_string)
+db_get_client(DB_TYPE *db_conn, struct client *client, const char *id_string)
 {
   char sql[SQL_STATEMENT_LENGTH];
 
-  sprintf(sql, QUOTE(
-        SELECT r.record_id, r.record_name, r.content
-        FROM ddns_clients dd
-        INNER JOIN records r USING(record_id)
-        WHERE dd.id_string = '%s';
-        ), id_string);
+  sprintf(sql, CLIENT_QUERY_STMT);
 
   return db_exec(db_conn, sql, cb_hostname, client);
 }
@@ -197,12 +217,11 @@ db_get_client(sqlite3 *db_conn, struct client *client, const char *id_string)
  * update the Ip address for a client
  */
 static int
-db_set_ip(sqlite3 *db_conn, struct client *client)
+db_set_ip(DB_TYPE *db_conn, struct client *client)
 {
   char sql[SQL_STATEMENT_LENGTH];
 
-  sprintf(sql, "UPDATE records SET content = '%s' WHERE record_id = %s;",
-      client->ip_addr, client->record_id);
+  sprintf(sql, IP_UPDATE_STMT);
 
   return db_exec(db_conn, sql, 0, 0);
 }
@@ -212,11 +231,11 @@ main()
 {
   debug("\033[1;32mStarting...\033[0m");
 
-  const char  db_file_name[] = DB_FILE_NAME;
-  struct      client client = {"","",""};
+  const char *db_conn_params = DB_CONN_PARAMS;
+  struct      client client;
   char        ip_addr[IP_ADDR_LENGTH], 
               query_string[QUERY_STRING_LENGTH];
-  sqlite3     *db_conn = 0;
+  DB_TYPE    *db_conn = 0;
 
   if (get_env_vars(ip_addr, "REMOTE_ADDR", IP_ADDR_LENGTH) != 0)
     die(1, "Can't get remote address");
@@ -227,7 +246,7 @@ main()
   if (validate_ip_address(ip_addr) != 0)
     die(3, "Not a valid IP address: %s", ip_addr);
 
-  if (db_open(db_file_name, &db_conn) != 0)
+  if (db_open(db_conn_params, &db_conn) != 0)
     die(4, "No database, no work!");
 
   if (db_optimize(db_conn) != 0)
@@ -235,7 +254,7 @@ main()
 
   if (db_get_client(db_conn, &client, query_string) != 0)
   {
-    sqlite3_close(db_conn);
+    DB_CLOSE(db_conn);
     die(5, "shit!");
   }
 
@@ -259,7 +278,7 @@ main()
     printf("IP address already known.\n");
 
   // bye
-  sqlite3_close(db_conn);
+  DB_CLOSE(db_conn);
   debug("\033[1;32mFinishing...\033[0m");
   return 0;
 }
