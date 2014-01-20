@@ -1,8 +1,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sqlite3.h>
 #include "debug.h"
+
+#ifdef SQLITE3
+#include <sqlite3.h>
+#ifndef DB_CONN_PARAMS
+#define DB_CONN_PARAMS "dns.db"
+#endif
+#define DB_TYPE sqlite3
+#define DB_OPEN(C,P) sqlite3_open(P, &C)
+#define DB_OPEN_OK SQLITE_OK
+#define DB_CLOSE(C) { sqlite3_close(C); }
+#define DB_ERR_MSG(C) sqlite3_errmsg(C)
+#elif defined PSQL
+#include <libpq-fe.h>
+#ifndef DB_CONN_PARAMS
+#define DB_CONN_PARAMS "dbname = dns"
+#endif
+#define DB_TYPE PGconn 
+#define DB_OPEN(C,P) (C = PQconnectdb(P))
+#define DB_OPEN_OK CONNECTION_OK
+#define DB_CLOSE(C) { PQfinish(C); }
+#define DB_ERR_MSG(C) PQerrorMessage(C)
+#endif
 
 #define QUOTE(...) #__VA_ARGS__
 #define UNUSED(x) (void)(x)
@@ -23,23 +44,6 @@
 #define CHARSET "utf-8"
 #endif
 
-#if DB_ENGINE == sqlite3
-#ifndef DB_CONN_PARAMS
-#define DB_CONN_PARAMS "dns.db"
-#endif
-#define DB_OPEN(C,P) { sqlite3_open(P, C); }
-#define DB_OPEN_OK SQLITE_OK
-#define DB_CLOSE(C) { sqlite3_close(C); }
-#define DB_TYPE sqlite3
-#elif DB_ENGINE == psql
-#ifndef DB_CONN_PARAMS
-#define DB_CONN_PARAMS "dbname = dns"
-#endif
-#define DB_OPEN
-#define DB_CLOSE(C) { PQfinish(C); }
-#define DB_TYPE PGconn 
-#endif
-
 #ifndef IP_UPDATE_STMT
 #define IP_UPDATE_STMT "UPDATE records SET content = '%s' WHERE record_id = %s;",\
                        client->ip_addr, client->record_id
@@ -54,31 +58,33 @@
 /*
  * struct which holds all information for a respective client
  */
-struct client
+typedef struct
 {
   char record_id[8],
        hostname[HOSTNAME_LENGTH],
        ip_addr[IP_ADDR_LENGTH]; 
-};
+} ddns_client_t;
 
 /*
  * wrapper function for opening a sqlite3 database
  */
-static int
-db_open(const char *db_conn_params, DB_TYPE **db_conn)
+static DB_TYPE*
+db_open(const char *db_conn_params)
 {
   debug("Open DB with params:\t\t%s", db_conn_params);
 
-  if ((DB_OPEN(db_conn, db_conn_params)) != DB_OPEN_OK) 
+  DB_TYPE *db_conn;
+
+  if (DB_OPEN(db_conn, db_conn_params) != DB_OPEN_OK) 
   {
-    log_err("Can't open database: %s", sqlite3_errmsg(*db_conn));
-    DB_CLOSE(*db_conn);
-    return 1;
+    log_err("Can't open database: %s", DB_ERR_MSG(db_conn));
+    DB_CLOSE(db_conn);
+    return NULL;
   } 
   else
   {
-    debug("\033[0;32mSuccessfully opened the database.\033[0m");
-    return 0;
+    debug("\033[0;32mSuccessfully opened the database.\033[0m", 0);
+    return db_conn;
   }
 }
 
@@ -103,11 +109,12 @@ db_exec(DB_TYPE *db_conn, const char *sql_statement,
   }
   else
   {
-    debug("\033[0;32mSuccessfully executed the SQL statement.\033[0m");
+    debug("\033[0;32mSuccessfully executed the SQL statement.\033[0m", 0);
     return 0;
   }
 }
 
+#ifdef SQLITE3
 /*
  * set database pragmas for performance increase
  */
@@ -122,6 +129,24 @@ db_optimize(DB_TYPE *db_conn)
 
   return db_exec(db_conn, sql, 0, 0);
 }
+
+/*
+ * callback function for SQL client query
+ */
+static int
+cb_hostname(void *client_v, int argc, char **argv, char **azColName)
+{
+  ddns_client_t *client = (ddns_client_t *)client_v;
+  UNUSED(argc);
+  UNUSED(azColName);
+
+  strncpy(client->record_id, argv[0] ? argv[0] : "", 7);
+  strncpy(client->hostname, argv[1] ? argv[1] : "", HOSTNAME_LENGTH - 1);
+  strncpy(client->ip_addr, argv[2] ? argv[2] : "", IP_ADDR_LENGTH - 1);
+
+  return 0;
+}
+#endif
 
 /*
  * print the HTTP header to stdout
@@ -182,29 +207,10 @@ validate_ip_address(const char *ip_addr)
 }
 
 /*
- * callback function for SQL client query
- */
-static int
-cb_hostname(void *client_v, int argc, char **argv, char **azColName)
-{
-  struct client *client = (struct client *)client_v;
-  //UNUSED(argc);
-  UNUSED(azColName);
-
-  debug("argc: %d", argc);
-
-  strncpy(client->record_id, argv[0] ? argv[0] : "", 7);
-  strncpy(client->hostname, argv[1] ? argv[1] : "", HOSTNAME_LENGTH - 1);
-  strncpy(client->ip_addr, argv[2] ? argv[2] : "", IP_ADDR_LENGTH - 1);
-
-  return 0;
-}
-
-/*
  * query client information from sqlite3 database
  */
 static int
-db_get_client(DB_TYPE *db_conn, struct client *client, const char *id_string)
+db_get_client(DB_TYPE *db_conn, ddns_client_t *client, const char *id_string)
 {
   char sql[SQL_STATEMENT_LENGTH];
 
@@ -217,7 +223,7 @@ db_get_client(DB_TYPE *db_conn, struct client *client, const char *id_string)
  * update the Ip address for a client
  */
 static int
-db_set_ip(DB_TYPE *db_conn, struct client *client)
+db_set_ip(DB_TYPE *db_conn, ddns_client_t *client)
 {
   char sql[SQL_STATEMENT_LENGTH];
 
@@ -229,33 +235,36 @@ db_set_ip(DB_TYPE *db_conn, struct client *client)
 int
 main()
 {
-  debug("\033[1;32mStarting...\033[0m");
+  debug("\033[1;32mStarting...\033[0m", 0);
 
-  const char *db_conn_params = DB_CONN_PARAMS;
-  struct      client client;
-  char        ip_addr[IP_ADDR_LENGTH], 
-              query_string[QUERY_STRING_LENGTH];
-  DB_TYPE    *db_conn = 0;
+  const char    *db_conn_params = DB_CONN_PARAMS;
+  char           ip_addr[IP_ADDR_LENGTH], 
+                 query_string[QUERY_STRING_LENGTH];
+  ddns_client_t  client;
+  DB_TYPE       *db_conn = 0;
 
   if (get_env_vars(ip_addr, "REMOTE_ADDR", IP_ADDR_LENGTH) != 0)
-    die(1, "Can't get remote address");
+    die(1, "Can't get remote address", 0);
 
   if (get_env_vars(query_string, "QUERY_STRING", QUERY_STRING_LENGTH) != 0)
-    die(2, "Can't get query string");
+    die(2, "Can't get query string", 0);
 
   if (validate_ip_address(ip_addr) != 0)
     die(3, "Not a valid IP address: %s", ip_addr);
 
-  if (db_open(db_conn_params, &db_conn) != 0)
-    die(4, "No database, no work!");
+  db_conn = db_open(db_conn_params);
+  if (db_conn == NULL)
+    die(4, "No database, no work!", 0);
 
+#ifdef SQLITE3
   if (db_optimize(db_conn) != 0)
-    log_err("Failed to set pragmas for increased performance!");
+    log_err("Failed to set pragmas for increased performance!", 0);
+#endif
 
   if (db_get_client(db_conn, &client, query_string) != 0)
   {
     DB_CLOSE(db_conn);
-    die(5, "shit!");
+    die(5, "shit!", 0);
   }
 
   print_http_header();
@@ -279,6 +288,6 @@ main()
 
   // bye
   DB_CLOSE(db_conn);
-  debug("\033[1;32mFinishing...\033[0m");
+  debug("\033[1;32mFinishing...\033[0m", 0);
   return 0;
 }

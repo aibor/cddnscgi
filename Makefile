@@ -3,7 +3,8 @@ SQLITE := /usr/bin/sqlite3
 PSQL := /usr/bin/psql
 SHELL := /usr/bin/bash
 
-DB_ENGINE := sqlite3
+DB_ENGINE := SQLITE3
+#DB_ENGINE := PSQL
 DB_FILE := ./dns.db
 DB_FILE_TEST := ./test.db
 DB_SCHEMA := ./db_schema.sql
@@ -12,23 +13,27 @@ REMOTE_ADDR := 192.168.234.234
 QUERY_STRING := qwertzuiop 
 
 CFLAGS = -g -Ofast -std=gnu99 -Wall -Wextra -Wformat -Wno-format-extra-args \
-				 -Wformat-security -Wformat-nonliteral -Wformat=2
+				 -Wformat-security -Wformat-nonliteral -Wformat=2 -Wunused-macros -Wundef \
+				 -Wendif-labels -Werror -pedantic
+
 LDFLAGS =
-FLAGS = -DDB_ENGINE='"$(DB_ENGINE)"'
+FLAGS = -D$(DB_ENGINE)
 NDEBUG = -DNDEBUG
 OBJ = ddns.o
 
-ifeq ($(DB_ENGINE), sqlite3)
+ifeq ($(DB_ENGINE), SQLITE3)
 LDFLAGS += -lsqlite3
 DB = $(DB_FILE)
 DB_TEST = $(DB_FILE_TEST)
 DB_CMD = $(SQLITE)
+DB_CMD_PARAMS = -init $(DB_SCHEMA) ""
 endif
-ifeq ($(DB_ENGINE), psql)
+ifeq ($(DB_ENGINE), PSQL)
 LDFLAGS += -lpq
 DB = dns
 DB_TEST = testdb
 DB_CMD = $(PSQL)
+DB_CMD_PARAMS = -f $(DB_SCHEMA)
 endif
 ifndef DB_CMD
 $(error No database command specified. Aborting!)
@@ -36,17 +41,17 @@ endif
 
 all: proper ddns db
 
-dev: proper testdb debug test
+dev: proper debug testdb test
 
 ddns: $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(NDEBUG) $(FLAGS) -o $@.cgi $(OBJ)
 
 debug: NDEBUG =
-debug: FLAGS = -DDB_CONN_PARAMS='"$(DB_TEST)"'
+debug: FLAGS += -DDB_CONN_PARAMS='"$(DB_TEST)"'
 debug: ddns
 
 db:
-	$(DB_CMD) $(DB) -init $(DB_SCHEMA) ""
+	$(DB_CMD) $(DB) $(DB_CMD_PARAMS)
 
 testdb: DB = $(DB_TEST)
 testdb: db
