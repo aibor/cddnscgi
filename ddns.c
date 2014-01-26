@@ -19,7 +19,7 @@
 #define DB_CONN_PARAMS "dbname = dns"
 #endif
 #define DB_TYPE PGconn 
-#define DB_OPEN(C,P) (C = PQconnectdb(P))
+#define DB_OPEN(C, P) (PQstatus(C = PQconnectdb(P)))
 #define DB_OPEN_OK CONNECTION_OK
 #define DB_CLOSE(C) { PQfinish(C); }
 #define DB_ERR_MSG(C) PQerrorMessage(C)
@@ -44,17 +44,6 @@
 #define CHARSET "utf-8"
 #endif
 
-#ifndef IP_UPDATE_STMT
-#define IP_UPDATE_STMT "UPDATE records SET content = '%s' WHERE record_id = %s;",\
-                       client->ip_addr, client->record_id
-#endif
-#ifndef CLIENT_QUERY_STMT
-#define CLIENT_QUERY_STMT "SELECT r.record_id, r.record_name, r.content "\
-                          "FROM ddns_clients dd "\
-                          "INNER JOIN records r USING(record_id) "\
-                          "WHERE dd.id_string = '%s';", id_string
-#endif
-
 /*
  * struct which holds all information for a respective client
  */
@@ -74,7 +63,6 @@ db_open(const char *db_conn_params)
   debug("Open DB with params:\t\t%s", db_conn_params);
 
   DB_TYPE *db_conn;
-
   if (DB_OPEN(db_conn, db_conn_params) != DB_OPEN_OK) 
   {
     log_err("Can't open database: %s", DB_ERR_MSG(db_conn));
@@ -88,23 +76,22 @@ db_open(const char *db_conn_params)
   }
 }
 
+#ifdef SQLITE3
 /*
  * wrapper function for exectuting any SQL statement
  */
 static int
-db_exec(DB_TYPE *db_conn, const char *sql_statement,
-    sqlite3_callback callback, void *data)
+db_exec(sqlite3 *db_conn, const char *sql_stmt, sqlite3_callback callback,
+        void *data)
 {
   char *zErrMsg = 0;
 
-  debug("Executing SQL statement:\n\t\033[0;33m%s\033[0m", sql_statement);
+  debug("Executing SQL statement:\n\t\033[0;33m%s\033[0m", sql_stmt);
 
-  if(sqlite3_exec(db_conn, sql_statement, callback, data, &zErrMsg)
-      != SQLITE_OK)
+  if(sqlite3_exec(db_conn, sql_stmt, callback, data, &zErrMsg) != SQLITE_OK)
   {
     log_err("SQL error:\t%s", zErrMsg);
     sqlite3_free(zErrMsg);
-    DB_CLOSE(db_conn);
     return 1;
   }
   else
@@ -114,21 +101,91 @@ db_exec(DB_TYPE *db_conn, const char *sql_statement,
   }
 }
 
-#ifdef SQLITE3
 /*
  * set database pragmas for performance increase
  */
 static int
-db_optimize(DB_TYPE *db_conn)
+db_optimize(sqlite3 *db_conn)
 {
-  char *sql = QUOTE(
-      PRAGMA foreign_keys=ON;
-      PRAGMA locking_mode=EXCLUSIVE;
-      PRAGMA synchronous=OFF;
-      );
+  char *sql = QUOTE(PRAGMA foreign_keys=ON; 
+                    PRAGMA locking_mode=EXCLUSIVE;
+                    PRAGMA synchronous=OFF;);
 
   return db_exec(db_conn, sql, 0, 0);
 }
+
+static int
+db_select(sqlite3 *db_conn, const char *sql_stmt, sqlite3_callback callback,
+          void *data)
+{
+  return db_exec(db_conn, sql_stmt, callback, data);
+}
+
+static int
+db_update(sqlite3 *db_conn, const char *sql_stmt)
+{
+  if (db_optimize(db_conn) != 0)
+    log_err("Failed to set pragmas for increased performance!", 0);
+
+  return db_exec(db_conn, sql_stmt, NULL, NULL);
+}
+
+#elif defined PSQL
+
+static int
+db_select(PGconn *db_conn, const char *sql_stmt, 
+          int (*callback)(void*, int, char**, char**), void *data)
+{
+  PGresult   *res;
+  int         nFields, i, j;
+
+  debug("Executing SQL statement:\n\t\033[0;33m%s\033[0m", sql_stmt);
+  res = PQexec(db_conn, sql_stmt);
+  if (PQresultStatus(res) != PGRES_TUPLES_OK)
+  {
+    log_err("SQL error: %s\n", PQerrorMessage(db_conn));
+    PQclear(res);
+    return 1;
+  }
+
+  nFields = PQnfields(res);
+  char *azColName[nFields];
+  for (i = 0; i < nFields; i++)
+    azColName[i] = PQfname(res, i);
+
+  for (i = 0; i < PQntuples(res); i++)
+  {
+    char *fields[nFields];
+    for (j = 0; j < nFields; j++)
+      fields[j] = PQgetvalue(res, i, j);
+
+    if (callback(data, nFields, fields, azColName) != 0)
+      return 2;
+  }
+    debug("\033[0;32mSuccessfully executed the SQL statement.\033[0m", 0);
+  return 0;
+}
+
+static int
+db_update(PGconn *db_conn, const char *sql_stmt)
+{
+  PGresult   *res;
+  debug("Executing SQL statement:\n\t\033[0;33m%s\033[0m", sql_stmt);
+  res = PQexec(db_conn, sql_stmt);
+    debug("\033[0;32mSuccessfully executed the SQL statement.\033[0m", 0);
+  if (PQresultStatus(res) != PGRES_COMMAND_OK)
+  {
+    log_err("SQL error: %s\n", PQerrorMessage(db_conn));
+    PQclear(res);
+    return 1;
+  }
+  else
+  {
+    PQclear(res);
+    return 0;
+  }
+}
+#endif
 
 /*
  * callback function for SQL client query
@@ -136,25 +193,17 @@ db_optimize(DB_TYPE *db_conn)
 static int
 cb_hostname(void *client_v, int argc, char **argv, char **azColName)
 {
-  ddns_client_t *client = (ddns_client_t *)client_v;
-  UNUSED(argc);
   UNUSED(azColName);
+  ddns_client_t *client = (ddns_client_t *)client_v;
 
-  strncpy(client->record_id, argv[0] ? argv[0] : "", 7);
-  strncpy(client->hostname, argv[1] ? argv[1] : "", HOSTNAME_LENGTH - 1);
-  strncpy(client->ip_addr, argv[2] ? argv[2] : "", IP_ADDR_LENGTH - 1);
+  if (argc < 3)
+    return 1;
+
+  strncat(client->record_id, argv[0] ? argv[0] : "", 8);
+  strncat(client->hostname, argv[1] ? argv[1] : "", HOSTNAME_LENGTH);
+  strncat(client->ip_addr, argv[2] ? argv[2] : "", IP_ADDR_LENGTH);
 
   return 0;
-}
-#endif
-
-/*
- * print the HTTP header to stdout
- */
-static void
-print_http_header(void)
-{
-  printf("%s%s%c%c\n", "Content-Type. text/plain;charset=",CHARSET,13,10);
 }
 
 /*
@@ -163,8 +212,7 @@ print_http_header(void)
 static int
 get_env_vars(char *buf, const char *name, size_t size)
 {
-  char *value = getenv (name);
-  unsigned int i = 0;
+  char *value = getenv(name);
 
   if (value == NULL)
     return 1;
@@ -172,7 +220,8 @@ get_env_vars(char *buf, const char *name, size_t size)
   if (strncpy(buf, value, size) == NULL)
     return 2;
 
-  for ( ; i < size; i++)
+  // strip out any single quote to avoid sql injetions
+  for (unsigned int i = 0 ; i < size; i++)
     if ((buf[i] =='\'') || (i == (size -1)))
       buf[i] = '\0';
 
@@ -185,11 +234,11 @@ get_env_vars(char *buf, const char *name, size_t size)
 static int
 validate_ip_address(const char *ip_addr)
 {
-  char buf[IP_ADDR_LENGTH],
-       *octet;
+  char buf[IP_ADDR_LENGTH] = "",
+       *octet = "";
   int  i = 0;
 
-  if (strncat(buf, ip_addr, sizeof(buf) - 1) == NULL)
+  if (strncat(buf, ip_addr, IP_ADDR_LENGTH) == NULL)
     return 1;
 
   octet = strtok (buf, ".");
@@ -212,11 +261,16 @@ validate_ip_address(const char *ip_addr)
 static int
 db_get_client(DB_TYPE *db_conn, ddns_client_t *client, const char *id_string)
 {
-  char sql[SQL_STATEMENT_LENGTH];
+  char sql[SQL_STATEMENT_LENGTH] = "";
 
-  sprintf(sql, CLIENT_QUERY_STMT);
+  sprintf(sql, QUOTE(
+            SELECT r.record_id, r.record_name, r.content
+            FROM ddns_clients dd
+            INNER JOIN records r USING(record_id)
+            WHERE dd.id_string = '%s';),
+          id_string);
 
-  return db_exec(db_conn, sql, cb_hostname, client);
+  return db_select(db_conn, sql, cb_hostname, client);
 }
 
 /*
@@ -227,9 +281,10 @@ db_set_ip(DB_TYPE *db_conn, ddns_client_t *client)
 {
   char sql[SQL_STATEMENT_LENGTH];
 
-  sprintf(sql, IP_UPDATE_STMT);
+  sprintf(sql, "UPDATE records SET content = '%s' WHERE record_id = %s;",
+          client->ip_addr, client->record_id);
 
-  return db_exec(db_conn, sql, 0, 0);
+  return db_update(db_conn, sql);
 }
 
 int
@@ -238,9 +293,9 @@ main()
   debug("\033[1;32mStarting...\033[0m", 0);
 
   const char    *db_conn_params = DB_CONN_PARAMS;
-  char           ip_addr[IP_ADDR_LENGTH], 
-                 query_string[QUERY_STRING_LENGTH];
-  ddns_client_t  client;
+  char           ip_addr[IP_ADDR_LENGTH] = "", 
+                 query_string[QUERY_STRING_LENGTH] = "";
+  ddns_client_t  client = { .record_id = "", .hostname = "", .ip_addr = ""};
   DB_TYPE       *db_conn = 0;
 
   if (get_env_vars(ip_addr, "REMOTE_ADDR", IP_ADDR_LENGTH) != 0)
@@ -256,18 +311,13 @@ main()
   if (db_conn == NULL)
     die(4, "No database, no work!", 0);
 
-#ifdef SQLITE3
-  if (db_optimize(db_conn) != 0)
-    log_err("Failed to set pragmas for increased performance!", 0);
-#endif
-
   if (db_get_client(db_conn, &client, query_string) != 0)
   {
     DB_CLOSE(db_conn);
     die(5, "shit!", 0);
   }
 
-  print_http_header();
+  printf("%s%s%c%c\n", "Content-Type. text/plain;charset=",CHARSET,13,10);
 
   debug("Hostname:\t\t%s", client.hostname);
   debug("IP:\t\t%s", client.ip_addr);
